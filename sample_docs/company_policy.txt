@@ -1,0 +1,22 @@
+ACME CORP - REMOTE WORK & LEAVE POLICY (Version 3.2, effective January 1, 2026)
+
+1. Remote Work
+Employees may work remotely up to three days per week with manager approval. Core collaboration hours are 10:00 AM to 3:00 PM local time, during which employees must be reachable. Fully remote arrangements require written approval from the Department Head and HR.
+
+2. Equipment Allowance
+Acme Corp provides a one-time home-office allowance of $750 for new remote employees, and a monthly internet stipend of $40. Receipts must be submitted within 30 days through the Expense Portal.
+
+3. Annual Leave
+Full-time employees receive 20 days of paid annual leave per year. Employees with more than 5 years of service receive 25 days. Unused leave of up to 5 days may be carried over into the next calendar year; any excess is forfeited on March 31.
+
+4. Sick Leave
+Employees receive 10 paid sick days per year. A medical certificate is required for absences longer than 3 consecutive days.
+
+5. Parental Leave
+Primary caregivers receive 16 weeks of fully paid parental leave. Secondary caregivers receive 6 weeks of fully paid leave. Leave must be taken within 12 months of the birth or adoption.
+
+6. Security Requirements
+All remote employees must use the company VPN, enable full-disk encryption, and complete security awareness training annually. Lost or stolen devices must be reported to the IT Security team within 2 hours at security@acme.example.
+
+7. Expense Approvals
+Expenses under $200 need manager approval. Expenses from $200 to $1,000 need Department Head approval. Expenses above $1,000 need VP Finance approval.

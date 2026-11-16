@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Document Agent</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M9 8h10l4 4v12H9z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+    </span>
+    <div><h1>Document Agent</h1><p>Ask questions · Get cited answers</p></div>
+  </div>
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="chat">💬 Ask</button>
+    <button class="tab" data-tab="docs">📁 Documents</button>
+    <button class="tab" data-tab="admin">⚙️ Admin</button>
+  </nav>
+  <button id="llm-badge" class="status" title="Open Admin settings"><span class="dot"></span><span id="llm-text">LLM not configured</span></button>
+</header>
+
+<main>
+<!-- ASK -->
+<section id="tab-chat" class="panel active">
+  <div class="chat-layout">
+    <div class="chat-col">
+      <div id="chat-log" aria-live="polite"></div>
+      <div class="composer">
+        <textarea id="question" rows="1" placeholder="Ask about your documents…  (Enter to send · Shift+Enter for a new line)"></textarea>
+        <button id="ask-btn" class="primary send" title="Send">Ask <span aria-hidden="true">➤</span></button>
+      </div>
+    </div>
+    <aside class="side">
+      <div class="side-head"><h3>Knowledge base</h3><button class="link" data-goto="docs">Manage</button></div>
+      <div id="side-docs"></div>
+    </aside>
+  </div>
+</section>
+
+<!-- DOCUMENTS -->
+<section id="tab-docs" class="panel">
+  <div class="card">
+    <div id="dropzone" class="dropzone" tabindex="0">
+      <div class="dz-icon">⬆️</div>
+      <div><b>Drop files here</b> or click to browse</div>
+      <div class="muted">PDF · TXT · MD · CSV · XLSX — up to 25 MB each</div>
+      <input type="file" id="file-input" multiple accept=".pdf,.txt,.md,.csv,.xlsx,.xlsm" hidden>
+    </div>
+    <div class="row-between">
+      <div id="upload-msg" class="msg"></div>
+      <button id="samples-btn">✨ Load sample documents</button>
+    </div>
+  </div>
+  <div class="section-title"><h2>Your documents</h2><span id="doc-count" class="muted"></span></div>
+  <div id="doc-grid" class="doc-grid"></div>
+</section>
+
+<!-- ADMIN -->
+<section id="tab-admin" class="panel">
+  <div class="card narrow">
+    <h2>LLM settings</h2>
+    <p class="muted">Choose any provider, paste an API key and press <b>Submit</b>. Settings are saved to <code>data/settings.json</code> on the server and used immediately. The key is never sent back to the browser.</p>
+    <label>Provider
+      <select id="provider"></select>
+    </label>
+    <label>Model name
+      <input id="model" list="model-list" placeholder="e.g. gpt-4o-mini" autocomplete="off">
+      <datalist id="model-list"></datalist>
+    </label>
+    <label>API key
+      <input id="api-key" type="password" placeholder="Paste API key" autocomplete="off">
+      <small id="key-status" class="muted"></small> <a id="key-link" class="muted" target="_blank" rel="noopener" hidden>Get an API key ↗</a>
+    </label>
+    <label>Base URL <span class="muted">(optional – Ollama / custom endpoints)</span>
+      <input id="base-url" placeholder="https://…">
+    </label>
+    <p id="hint" class="muted"></p>
+    <div class="btn-row">
+      <button id="submit-settings" class="primary">Submit</button>
+      <button id="test-btn">Test connection</button>
+    </div>
+    <div id="admin-msg" class="msg"></div>
+  </div>
+</section>
+</main>
+<div id="toasts"></div>
+<script src="/static/util.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

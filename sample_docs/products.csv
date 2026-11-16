@@ -1,0 +1,16 @@
+sku,product_name,category,unit_price,stock_units,supplier,rating
+A100,Acme Ergo Keyboard,Accessories,89.99,120,KeyCo,4.6
+A101,Acme Wireless Mouse,Accessories,34.50,300,KeyCo,4.4
+A102,Acme USB-C Hub,Accessories,59.00,85,ConnectX,4.2
+A103,Acme Webcam 4K,Accessories,129.00,40,VisionTech,4.5
+B200,Acme Laptop Stand,Furniture,45.00,150,DeskWorks,4.7
+B201,Acme Standing Desk,Furniture,499.00,22,DeskWorks,4.8
+B202,Acme Office Chair,Furniture,329.00,35,SitWell,4.3
+B203,Acme Monitor Arm,Furniture,79.00,90,DeskWorks,4.1
+C300,Acme 27in Monitor,Displays,289.00,60,VisionTech,4.5
+C301,Acme 32in 4K Monitor,Displays,549.00,18,VisionTech,4.6
+C302,Acme Portable Monitor,Displays,199.00,55,ConnectX,3.9
+D400,Acme Noise-Cancelling Headset,Audio,179.00,75,SoundPeak,4.7
+D401,Acme Conference Speaker,Audio,149.00,28,SoundPeak,4.0
+D402,Acme Studio Microphone,Audio,119.00,0,SoundPeak,4.4
+E500,Acme Docking Station,Accessories,219.00,48,ConnectX,4.3

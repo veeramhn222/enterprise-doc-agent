@@ -17,15 +17,28 @@ def model_string(s: dict) -> str:
     return f"{prov['prefix']}/{s['model']}"
 
 
+def not_configured_message(s: dict) -> str:
+    prov = s.get("provider")
+    if prov not in config.PROVIDERS or not s.get("model"):
+        reason = "no provider and model are selected"
+    elif prov == "custom" and not s.get("base_url"):
+        reason = "the custom provider needs a Base URL"
+    else:
+        reason = f"no API key is saved for {config.PROVIDERS[prov]['label']}"
+    return f"The model is not configured: {reason}. Open the Admin page, choose a provider and model, and add an API key."
+
+
+def ensure_configured(settings: dict | None = None) -> dict:
+    """Return the settings in use, or raise LLMNotConfigured with a message that tells the user what to do."""
+    s = settings if settings is not None else config.load_settings()
+    if not config.is_configured(s):
+        raise LLMNotConfigured(not_configured_message(s))
+    return s
+
+
 def chat(messages: list[dict], temperature: float = 0.1, max_tokens: int = 1200,
          settings: dict | None = None, timeout: int = 90, retries: int = 2) -> str:
-    s = settings or config.load_settings()
-    if not (s.get("provider") and s.get("model")):
-        raise LLMNotConfigured("LLM is not configured. Open the Admin tab, pick a provider/model and save your API key.")
-    if s["provider"] not in ("ollama", "custom") and not s.get("api_key"):
-        raise LLMNotConfigured("No API key saved. Open the Admin tab and enter your API key.")
-    if s["provider"] == "custom" and not s.get("base_url"):
-        raise LLMError("Custom provider needs a Base URL (Admin tab).")
+    s = ensure_configured(settings)
 
     import litellm  # imported lazily so the app starts fast
     litellm.drop_params = True       # silently drop params a given model does not support

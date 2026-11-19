@@ -236,6 +236,8 @@ def _answer_plain(question: str, note: str | None = None) -> dict:
 
 def answer_question(question: str) -> dict:
     """Entry point. Uses the LangGraph state machine when available, else the plain orchestrator."""
+    guardrails.validate_question(question)
+    llm.ensure_configured()          # no usable model/key -> "The model is not configured ..." before anything else runs
     if config.ORCHESTRATOR == "langgraph":
         try:
             from . import graph

@@ -42,9 +42,24 @@ document.querySelectorAll('.tab').forEach(b => b.onclick = () => showTab(b.datas
 $('#llm-badge').onclick = () => showTab('admin');
 
 // ------------------------------------------------------------------- admin
+const OTHER = '__other__';
+function syncPick() {                                   // dropdown = every known model + the saved/current one + "Other…"
+  const p = providers[$('#provider').value] || {models: []}, cur = $('#model').value.trim();
+  const list = [...p.models]; if (cur && !list.includes(cur)) list.unshift(cur);
+  const sel = $('#model-pick'), other = !cur && !p.models.length;
+  sel.innerHTML = list.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('') + `<option value="${OTHER}">Other (type a model name)…</option>`;
+  sel.value = other ? OTHER : (cur || list[0] || OTHER);
+  if (sel.value !== OTHER && !cur) $('#model').value = sel.value;
+  $('#model').hidden = sel.value !== OTHER;
+}
+$('#model-pick').onchange = () => {
+  const v = $('#model-pick').value;
+  if (v === OTHER) { $('#model').value = ''; $('#model').hidden = false; $('#model').focus(); }
+  else { $('#model').value = v; $('#model').hidden = true; }
+};
 function fillModels() {
   const p = providers[$('#provider').value] || {models: [], hint: ''};
-  $('#model-list').innerHTML = p.models.map(m => `<option value="${esc(m)}">`).join('');
+  syncPick();
   $('#hint').textContent = p.hint || '';
   const a = $('#key-link');
   if (p.key_url) { a.href = p.key_url; a.hidden = false; } else { a.hidden = true; }
@@ -53,19 +68,51 @@ function paintStatus() {
   const b = $('#llm-badge');
   $('#llm-text').textContent = settings.configured ? `${settings.provider} · ${settings.model}` : 'LLM not configured';
   b.className = 'status' + (settings.configured ? ' ok' : '');
+  $('#cfg-banner').hidden = !!settings.configured;
 }
-async function loadSettings() {
+function renderKeys() {
+  const rows = settings.profiles || [];
+  $('#env-note').hidden = !settings.env_key_present;
+  $('#key-list').innerHTML = rows.length ? rows.map(p => {
+    const usable = p.has_key || !p.needs_key;
+    const badge = p.active ? (usable ? '<span class="st-badge active">● Active</span>' : '<span class="st-badge warn">Active · no key</span>')
+                           : (usable ? '<span class="st-badge">Saved</span>' : '<span class="st-badge">No key</span>');
+    const val = p.has_key ? `<code class="keyval">${esc(p.key_hint)}</code>`
+              : (p.needs_key ? '<span class="keyval blank">— empty —</span>' : '<span class="keyval blank">no key needed</span>');
+    return `<div class="key-row" data-provider="${esc(p.provider)}">
+      <div class="who"><b>${esc(p.label)}</b><span>${esc(p.model || '—')}${p.base_url ? ' · ' + esc(p.base_url) : ''}</span></div>
+      ${val}${badge}
+      ${usable && !p.active ? `<button class="use" data-act="usekey" data-prov="${esc(p.provider)}" title="Make this the active model">Use</button>` : '<span></span>'}
+      <button class="icon-btn" data-act="delkey" data-prov="${esc(p.provider)}" title="Delete this API key" aria-label="Delete ${esc(p.label)} API key">🗑</button>
+    </div>`;
+  }).join('') : '<p class="muted">No keys saved yet. Add one below.</p>';
+}
+async function loadSettings(resetForm = true) {
   const d = await api('/api/admin/settings');
   providers = d.providers; settings = d.settings;
-  $('#provider').innerHTML = Object.entries(providers).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
-  if (settings.provider) $('#provider').value = settings.provider;
-  $('#model').value = settings.model || '';
-  $('#base-url').value = settings.base_url || '';
-  $('#api-key').value = '';
-  $('#key-status').textContent = settings.has_api_key ? '✔ A key is saved. Leave blank to keep it.' : 'No key saved yet.';
-  fillModels(); paintStatus();
+  if (resetForm || !$('#provider').options.length) {          // opening the tab / saving: fill the form from the active entry
+    $('#provider').innerHTML = Object.entries(providers).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join('');
+    if (settings.provider) $('#provider').value = settings.provider;
+    $('#model').value = settings.model || '';
+    $('#base-url').value = settings.base_url || '';
+    $('#api-key').value = '';
+  }                                                           // deleting / switching a key leaves what the user is typing alone
+  fillModels(); showFormKeyState(); renderKeys(); paintStatus();
 }
-$('#provider').onchange = () => { fillModels(); const m = (providers[$('#provider').value].models || [])[0]; if (m) $('#model').value = m; };
+function showFormKeyState() {
+  const prov = $('#provider').value, saved = (settings.profiles || []).find(p => p.provider === prov);
+  const needs = (providers[prov] || {}).needs_key !== false;
+  $('#key-status').textContent = saved && saved.has_key ? '✔ A key is saved for this provider. Leave blank to keep it.'
+    : (needs ? 'No key saved for this provider.' : 'No key needed for this provider.');
+}
+$('#provider').onchange = () => {
+  $('#model').value = '';
+  fillModels();
+  const prov = $('#provider').value, saved = (settings.profiles || []).find(p => p.provider === prov);
+  $('#model').value = (saved && saved.model) || (providers[prov].models || [])[0] || ''; syncPick();
+  $('#base-url').value = (saved && saved.base_url) || '';
+  $('#api-key').value = ''; showFormKeyState();
+};
 $('#submit-settings').onclick = async () => {
   const btn = $('#submit-settings'); btn.disabled = true;
   try {
@@ -157,6 +204,20 @@ document.addEventListener('click', async e => {
   if (t.dataset.q) { showTab('chat'); ask(t.dataset.q); }
   else if (t.dataset.goto) showTab(t.dataset.goto);
   else if (t.dataset.act === 'samples') loadSamples();
+  else if (t.dataset.act === 'delkey') {
+    const row = (settings.profiles || []).find(p => p.provider === t.dataset.prov);
+    if (!confirm(`Delete the ${row ? row.label : ''} entry and its API key from the server?` + (row && row.active ? ' It is the active model, so questions will stop working until you add a key.' : ''))) return;
+    t.disabled = true;
+    try {
+      await api('/api/admin/keys/' + encodeURIComponent(t.dataset.prov), {method: 'DELETE'});
+      msg($('#admin-msg'), `The ${row ? row.label : ''} API key was deleted.`, 'ok'); toast('API key deleted');
+    } catch (err) { msg($('#admin-msg'), err.message, 'err'); }
+    await loadSettings(false);
+  } else if (t.dataset.act === 'usekey') {
+    try { await api('/api/admin/active', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({provider: t.dataset.prov})}); toast('Active model changed'); }
+    catch (err) { msg($('#admin-msg'), err.message, 'err'); }
+    await loadSettings(false);
+  }
   else if (t.dataset.act === 'del') {
     if (!confirm('Delete this document and its index?')) return;
     try { await api('/api/documents/' + t.dataset.id, {method: 'DELETE'}); toast('Document deleted'); } catch (err) { toast(err.message, 'err'); }

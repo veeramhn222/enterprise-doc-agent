@@ -34,7 +34,16 @@ class _HashEmbedder:
         return out
 
 
+_embedder_lock = threading.Lock()
+
+
 def _get_embedder():
+    global _embedder
+    with _embedder_lock:
+        return _init_embedder()
+
+
+def _init_embedder():
     global _embedder
     if _embedder is None:
         if config.EMBEDDINGS == "hash":

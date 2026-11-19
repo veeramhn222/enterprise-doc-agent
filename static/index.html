@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Document Agent</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M9 8h10l4 4v12H9z' fill='white'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/style.css?v=__V__">
 </head>
 <body>
 <header class="topbar">
@@ -28,6 +28,7 @@
 <section id="tab-chat" class="panel active">
   <div class="chat-layout">
     <div class="chat-col">
+      <div id="cfg-banner" class="notice" hidden>⚠️ The model is not configured. <button class="link" data-goto="admin">Open Admin</button> and add an API key.</div>
       <div id="chat-log" aria-live="polite"></div>
       <div class="composer">
         <textarea id="question" rows="1" placeholder="Ask about your documents…  (Enter to send · Shift+Enter for a new line)"></textarea>
@@ -62,14 +63,20 @@
 <!-- ADMIN -->
 <section id="tab-admin" class="panel">
   <div class="card narrow">
-    <h2>LLM settings</h2>
-    <p class="muted">Choose any provider, paste an API key and press <b>Submit</b>. Settings are saved to <code>data/settings.json</code> on the server and used immediately. The key is never sent back to the browser.</p>
+    <h2>Saved API keys</h2>
+    <p class="muted">Keys are stored on the server and shown masked. Click the <b>🗑</b> icon to delete a key: its row is removed completely, and if it was the active model, questions answer “The model is not configured” until you add a key.</p>
+    <p id="env-note" class="notice" hidden>A key is also provided through the <code>LLM_API_KEY</code> environment variable. Deleting it here lasts until the app restarts; remove the variable to delete it for good.</p>
+    <div id="key-list" class="key-list"></div>
+  </div>
+  <div class="card narrow">
+    <h2>Add or update a key</h2>
+    <p class="muted">Choose a provider, paste its API key and press <b>Submit</b>. The key is saved to <code>data/settings.json</code> on the server and that provider becomes the active model. Keys are never sent back to the browser in full.</p>
     <label>Provider
       <select id="provider"></select>
     </label>
     <label>Model name
-      <input id="model" list="model-list" placeholder="e.g. gpt-4o-mini" autocomplete="off">
-      <datalist id="model-list"></datalist>
+      <select id="model-pick"></select>
+      <input id="model" placeholder="Type the model name, e.g. gpt-4o-mini" autocomplete="off" hidden>
     </label>
     <label>API key
       <input id="api-key" type="password" placeholder="Paste API key" autocomplete="off">
@@ -87,8 +94,9 @@
   </div>
 </section>
 </main>
+<footer class="foot">Document Agent · build __V__</footer>
 <div id="toasts"></div>
-<script src="/static/util.js"></script>
-<script src="/static/app.js"></script>
+<script src="/static/util.js?v=__V__"></script>
+<script src="/static/app.js?v=__V__"></script>
 </body>
 </html>

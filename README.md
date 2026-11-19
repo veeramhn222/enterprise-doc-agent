@@ -71,6 +71,15 @@ document descriptions. It imports the backend directly, so no FastAPI server is 
 - Memory and CPU are limited; the first upload downloads an ~80 MB embedding model. If the app runs out of memory, set `EMBEDDINGS = "hash"` in Secrets.
 - If ChromaDB cannot start on the host (for example an old `sqlite3`), the app falls back to its built-in numpy vector store automatically and prints a warning in the logs.
 
+**If the Streamlit app feels slow**
+| What you see | Why | What to do |
+|---|---|---|
+| Page shows "app is sleeping" or loads for a minute | Free apps sleep when idle and restart on the next visit | Click **Yes, get this app back up** and wait; open the app a few minutes before a demo |
+| Sidebar says "Warming up the search model" | The ~80 MB embedding model downloads after every restart (storage is temporary) | Wait until it says "Search model ready"; this now happens in the background at startup |
+| Answers take 10-40 s | Each question runs 3-6 sequential LLM calls (planner, reasoner, validator, sometimes a revision) | Use a faster model, e.g. `claude-haiku-5-5`, `gpt-4o-mini` or `gemini-2.0-flash`; the answer shows its total time |
+| Upload takes long | Embedding plus one LLM description call per file (done in parallel) | Upload fewer or smaller files; the first upload after a restart also waits for the model |
+| Build or restart stuck for many minutes | Large dependencies on first build | Check **Manage app -> Logs** on Streamlit; set `EMBEDDINGS = "hash"` in Secrets for a lightweight mode |
+
 ## 2. Using the app (reviewer walkthrough)
 The UI has three tabs: **Ask** (chat + a "Knowledge base" side panel), **Documents** and **Admin**.
 
@@ -79,6 +88,14 @@ The UI has three tabs: **Ask** (chat + a "Knowledge base" side panel), **Documen
    - Examples: OpenAI `gpt-4o-mini` · Anthropic `claude-sonnet-5-5` · Gemini `gemini-2.0-flash` · Groq `llama-3.3-70b-versatile`
    - Ollama / custom endpoints: also fill *Base URL* (e.g. `http://localhost:11434`). Ollama needs no key.
    - Model names are free text, so any model your key can access works.
+   - **Several keys:** the Admin tab lists every saved key in its own row (masked, e.g. `sk-a…5f2a`) with the model, a status
+     (Active / Saved / No key), a **Use** button to switch the active model and a **🗑** icon to delete that key.
+   - **Delete a key:** click 🗑 on its row. The key and its row are erased from `data/settings.json` on the server and the row disappears
+     from the list. If it was the active model, the header shows "LLM not configured" and any question is answered with
+     *"The model is not configured … Open the Admin page … add an API key."* (nothing is sent to the LLM). Add the key again with the form below.
+   - API: `GET /api/admin/settings`, `POST /api/admin/settings` (save + activate), `POST /api/admin/active`, `DELETE /api/admin/keys/{provider}`.
+   - Keys are only ever shown masked. If a key is also set through the `LLM_API_KEY` environment variable / Streamlit secret, deleting it
+     in the UI lasts until the app restarts; remove it from the environment / Secrets to delete it for good.
 2. **Documents tab** -> drag & drop files (or **Load sample documents**). Every file gets a **high-level description**:
    a summary, topic tags and **"You could ask"** suggestions. Click a suggestion to ask it straight away.
    Descriptions are built offline from the file content ("Auto summary"). When an LLM key is saved, new uploads get an

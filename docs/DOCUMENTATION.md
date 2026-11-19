@@ -91,7 +91,7 @@ Tools: `search_documents(query)`, `list_documents()`, `calculator(expression)` (
 - **Harmful-request filter:** small deny-list for obviously harmful requests.
 - **Hallucination reduction:** relevance threshold (no relevant chunk -> the LLM is not even called and the app says it could not find an answer);
   "answer only from context" prompt; mandatory citations; independent Validator agent; revision loop; low-confidence banner.
-- **Secret protection:** API key is stored server-side only, never returned by the API, masked in error messages, and redacted from outputs; `settings.json` is chmod 600.
+- **Secret protection:** the Admin tab lists every saved key (masked) with a delete icon (`DELETE /api/admin/keys/{provider}`) that erases that key on demand; once the active key is gone every question is refused up front with "The model is not configured" and nothing is sent to the LLM. API key is stored server-side only, never returned by the API, masked in error messages, and redacted from outputs; `settings.json` is chmod 600.
 - **Error handling:** friendly messages for missing config, bad key, rate limit, wrong model name, timeouts, unreadable/password-protected/scanned PDFs, empty files; a global handler prevents stack traces reaching the UI; LLM calls retry twice.
 - **Graceful degradation:** planner/validator parse failures fall back to a single search / neutral verdict; missing chromadb or ONNX falls back to a numpy store / hash embeddings.
 

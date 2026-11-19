@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -19,6 +19,10 @@ class SettingsIn(BaseModel):
     model: str
     api_key: str = ""
     base_url: str = ""
+
+
+class ActiveIn(BaseModel):
+    provider: str
 
 
 class QueryIn(BaseModel):
@@ -45,18 +49,42 @@ async def _unhandled(_, exc):
 @app.get("/api/admin/settings")
 def get_settings():
     return {"settings": config.public_settings(),
-            "providers": {k: {"label": v["label"], "models": v["models"], "hint": v["hint"], "key_url": v.get("key_url", "")}
+            "providers": {k: {"label": v["label"], "models": v["models"], "hint": v["hint"], "key_url": v.get("key_url", ""),
+                              "needs_key": config.needs_key(k)}
                           for k, v in config.PROVIDERS.items()}}
 
 
 @app.post("/api/admin/settings")
 def post_settings(body: SettingsIn):
+    """Save (or update) the key/model for one provider and make it the active one."""
     if body.provider not in config.PROVIDERS:
         raise HTTPException(400, "Unknown provider.")
     if not body.model.strip():
         raise HTTPException(400, "Model name is required.")
+    if config.needs_key(body.provider) and not (body.api_key.strip() or config.has_saved_key(body.provider)):
+        raise HTTPException(400, "An API key is required for this provider.")
+    if body.provider == "custom" and not body.base_url.strip():
+        raise HTTPException(400, "The custom provider needs a Base URL.")
     config.save_settings(body.provider, body.model, body.api_key, body.base_url)
     return {"ok": True, "settings": config.public_settings()}
+
+
+@app.post("/api/admin/active")
+def post_active(body: ActiveIn):
+    """Use an already saved provider entry."""
+    try:
+        return {"ok": True, "settings": config.set_active(body.provider)}
+    except KeyError:
+        raise HTTPException(404, "No saved entry for that provider.")
+
+
+@app.delete("/api/admin/keys/{provider}")
+def delete_key(provider: str):
+    """Delete the saved API key of one provider (the whole row is removed)."""
+    try:
+        return {"ok": True, "settings": config.delete_key(provider)}
+    except KeyError:
+        raise HTTPException(404, "No saved entry for that provider.")
 
 
 @app.post("/api/admin/test")
@@ -150,13 +178,14 @@ def query(body: QueryIn):
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "llm_configured": config.public_settings()["configured"],
+    return {"status": "ok", "version": config.APP_VERSION, "llm_configured": config.public_settings()["configured"],
             "documents": len(vectorstore.list_documents())}
 
 
 @app.get("/")
 def index():
-    return FileResponse(STATIC / "index.html")
+    html = (STATIC / "index.html").read_text(encoding="utf-8").replace("__V__", config.APP_VERSION)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})      # never serve a stale page; assets are versioned with ?v=
 
 
 app.mount("/static", StaticFiles(directory=STATIC), name="static")

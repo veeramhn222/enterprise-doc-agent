@@ -38,6 +38,9 @@ def fresh_store(monkeypatch):
     monkeypatch.setattr(vectorstore, "_collection", col)
     monkeypatch.setattr(vectorstore, "_get_collection", lambda: col)
     config.REGISTRY_FILE.unlink(missing_ok=True)
+    config.SETTINGS_FILE.unlink(missing_ok=True)
+    config.save_settings("openai", "gpt-4o-mini", "sk-test-default-123456", "")        # a configured model by default
+    monkeypatch.setitem(sys.modules, "litellm", None)                                  # any un-mocked LLM call fails fast, offline
     yield
 
 
@@ -149,19 +152,10 @@ def test_validator_triggers_revision(monkeypatch):
     assert r["validation"]["grounded"]
 
 
-def test_settings_roundtrip_and_key_kept():
-    config.save_settings("openai", "gpt-4o-mini", "sk-test-123456", "")
-    config.save_settings("anthropic", "claude-sonnet-5-5", "", "")      # blank key keeps old one
-    s = config.load_settings()
-    assert s["provider"] == "anthropic" and s["api_key"] == "sk-test-123456"
-    assert "api_key" not in config.public_settings() and config.public_settings()["has_api_key"]
 
 
-def test_llm_not_configured_message():
-    with pytest.raises(llm.LLMNotConfigured):
-        llm.chat([{"role": "user", "content": "hi"}], settings={"provider": "", "model": "", "api_key": ""})
-    with pytest.raises(llm.LLMNotConfigured):
-        llm.chat([{"role": "user", "content": "hi"}], settings={"provider": "openai", "model": "x", "api_key": ""})
+
+
 
 
 def test_numpy_fallback_store_roundtrip(tmp_path, monkeypatch):
@@ -383,9 +377,11 @@ def make_fake_st():
     st = MagicMock(name="streamlit")
     st.session_state = _SS(messages=[], page="💬 Ask")
     st.secrets = {}
+    st.cache_resource = lambda f: f                                       # decorator: run the function as-is
     def make_col():
         col = MagicMock()
         col.button.side_effect = lambda *a, **k: st.button(*a, **k)       # column buttons behave like st.button
+        col.markdown.side_effect = lambda *a, **k: st.markdown(*a, **k)   # so tests can see what a column displays
         return col
     st.columns.side_effect = lambda n, *a, **k: [make_col() for _ in range(n if isinstance(n, int) else len(n))]
     for name in ("spinner", "container", "chat_message", "expander"):     # context managers must not swallow errors
@@ -465,3 +461,247 @@ def test_streamlit_admin_submit_saves_settings(sa):
     finally:
         sa.llm.chat = monkeypatched
     assert "Connected" in sa.st.success.call_args_list[-1].args[0]
+
+
+def test_bulk_upload_describes_in_parallel_and_survives_failures(monkeypatch):
+    import threading, time
+    seen = set()
+    def slow_llm(*a, **k):
+        seen.add(threading.current_thread().name); time.sleep(0.3)
+        return json.dumps({"summary": "AI text.", "topics": ["t"], "questions": ["q?"]})
+    monkeypatch.setattr(llm, "chat", slow_llm)
+    files = [(f"doc{i}.txt", f"Document number {i} talks about topic {i}.\n\nMore text {i}.".encode()) for i in range(4)]
+    files += [("bad.exe", b"MZ"), ("empty.txt", b"")]
+    t0 = time.time()
+    res = service.ingest_uploads(files)
+    elapsed = time.time() - t0
+    assert [r["ok"] for r in res] == [True] * 4 + [False, False]
+    assert elapsed < 0.3 * 4 * 0.8, f"descriptions were not parallel ({elapsed:.2f}s)"       # 4 x 0.3s serial = 1.2s
+    docs = vectorstore.list_documents()
+    assert len(docs) == 4 and all(d["description"]["described_by"] == "ai" for d in docs)
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: (_ for _ in ()).throw(llm.LLMError("down")))
+    res = service.ingest_uploads([("late.txt", b"Late file about refunds.\n\nMore.")])
+    assert res[0]["ok"] and next(d for d in vectorstore.list_documents() if d["filename"] == "late.txt")["description"]["described_by"] == "auto"
+
+
+def test_streamlit_warmup_runs_once_in_background(sa):
+    import time
+    calls = []
+    real = vectorstore.embed
+    vectorstore.embed = lambda texts: calls.append(texts) or real(texts)
+    try:
+        state = sa.start_warmup()
+        for _ in range(50):
+            if state["status"] != "loading": break
+            time.sleep(0.05)
+    finally:
+        vectorstore.embed = real
+    assert state["status"] == "ready" and state["seconds"] is not None and calls
+
+
+
+
+
+
+
+
+# ------------------------------------------------------- multiple saved keys, delete, "not configured"
+def test_profiles_per_provider_and_blank_key_keeps_own_key():
+    config.SETTINGS_FILE.unlink()
+    config.save_settings("openai", "gpt-4o-mini", "sk-openai-key-111111", "")
+    s = config.save_settings("anthropic", "claude-sonnet-5-5", "", "")           # no key typed for a NEW provider
+    assert s["provider"] == "anthropic" and s["api_key"] == ""                    # the OpenAI key must not leak across providers
+    assert not llm.config.is_configured(s)
+    config.set_active("openai")
+    assert config.load_settings()["api_key"] == "sk-openai-key-111111"
+    config.save_settings("openai", "gpt-4o", "", "")                              # blank key keeps THIS provider's key
+    assert config.load_settings()["api_key"] == "sk-openai-key-111111" and config.load_settings()["model"] == "gpt-4o"
+    config.save_settings("openai", "gpt-4o", "sk-openai-key-222222", "")          # a new key replaces it
+    assert config.load_settings()["api_key"] == "sk-openai-key-222222"
+    pub = config.public_settings()
+    assert [p["provider"] for p in pub["profiles"]] == ["openai", "anthropic"] and pub["profiles"][0]["active"]
+    assert "sk-openai-key-222222" not in json.dumps(pub) and pub["profiles"][0]["key_hint"] == "sk-o\u20262222"
+    with pytest.raises(ValueError):
+        config.save_settings("nope", "m", "k", "")
+
+
+def test_delete_key_empties_the_key_and_unconfigures_the_model():
+    config.SETTINGS_FILE.unlink()
+    config.save_settings("openai", "gpt-4o-mini", "sk-secret-123456", "")
+    config.save_settings("groq", "llama-3.3-70b-versatile", "gsk-secret-654321", "")
+    pub = config.delete_key("groq")                                               # groq is the ACTIVE one
+    assert pub["configured"] is False and pub["has_api_key"] is False and pub["provider"] == ""
+    assert [p["provider"] for p in pub["profiles"]] == ["openai"]                 # the groq row is gone completely
+    text = config.SETTINGS_FILE.read_text()
+    assert "gsk-secret-654321" not in text and "sk-secret-123456" in text         # only that key was erased
+    config.delete_key("openai")
+    assert "sk-secret-123456" not in config.SETTINGS_FILE.read_text() and config.public_settings()["profiles"] == []
+    with pytest.raises(KeyError):
+        config.delete_key("mistral")
+    with pytest.raises(KeyError):
+        config.set_active("mistral")
+    config.save_settings("groq", "llama-3.3-70b-versatile", "gsk-new-key-777777", "")   # adding a key again works
+    assert config.public_settings()["configured"] is True
+
+
+def test_deleted_key_is_not_resurrected_by_environment_variable():
+    config.SETTINGS_FILE.unlink()
+    old = {k: os.environ.get(k) for k in ("LLM_PROVIDER", "LLM_MODEL", "LLM_API_KEY")}
+    os.environ.update(LLM_PROVIDER="openai", LLM_MODEL="gpt-4o-mini", LLM_API_KEY="sk-from-env-999999")
+    try:
+        assert config.public_settings()["configured"] and config.public_settings()["env_key_present"]   # env-only setup works
+        assert config.public_settings()["profiles"][0]["key_hint"] == "sk-f\u20269999"
+        config.delete_key("openai")                                                # delete the env-provided key
+        assert config.load_settings()["api_key"] == "" and config.public_settings()["configured"] is False
+        with pytest.raises(llm.LLMNotConfigured):
+            llm.chat([{"role": "user", "content": "hi"}])
+    finally:
+        for k, v in old.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+def test_legacy_single_key_file_is_migrated():
+    config.SETTINGS_FILE.write_text(json.dumps({"provider": "anthropic", "model": "claude-haiku-5-5", "api_key": "sk-ant-legacy-0001", "base_url": ""}))
+    s = config.load_settings()
+    assert (s["provider"], s["model"], s["api_key"]) == ("anthropic", "claude-haiku-5-5", "sk-ant-legacy-0001")
+    config.delete_key("anthropic")
+    assert json.loads(config.SETTINGS_FILE.read_text())["profiles"] == {}
+
+
+def test_providers_that_need_no_key():
+    assert config.is_configured({"provider": "ollama", "model": "llama3.1", "api_key": "", "base_url": ""})
+    assert not config.is_configured({"provider": "custom", "model": "m", "api_key": "", "base_url": ""})       # needs a base URL
+    assert config.is_configured({"provider": "custom", "model": "m", "api_key": "", "base_url": "http://x/v1"})
+    assert not config.is_configured({"provider": "openai", "model": "m", "api_key": "", "base_url": ""})
+
+
+def test_llm_not_configured_messages():
+    for s in ({"provider": "", "model": "", "api_key": ""}, {"provider": "openai", "model": "x", "api_key": ""}):
+        with pytest.raises(llm.LLMNotConfigured) as e:
+            llm.chat([{"role": "user", "content": "hi"}], settings=s)
+        assert "model is not configured" in str(e.value).lower() and "Admin" in str(e.value)
+    assert "OpenAI" in llm.not_configured_message({"provider": "openai", "model": "x", "api_key": ""})
+
+
+def test_question_without_a_key_says_model_not_configured(monkeypatch):
+    load("company_policy.txt")
+    called = []
+    monkeypatch.setattr(llm, "chat", lambda *a, **k: called.append(1))
+    config.delete_key("openai")
+    for mode in ("plain", "langgraph"):
+        monkeypatch.setattr(config, "ORCHESTRATOR", mode)
+        with pytest.raises(llm.LLMNotConfigured) as e:
+            agents.answer_question("How many days of annual leave do I get?")
+        assert "not configured" in str(e.value)
+    assert not called                                                             # nothing was sent to the LLM
+    vectorstore.delete_document(vectorstore.list_documents()[0]["doc_id"])        # even with NO documents the model message wins
+    with pytest.raises(llm.LLMNotConfigured):
+        agents.answer_question("What is our leave policy?")
+    with pytest.raises(guardrails.GuardrailViolation):                            # input validation still comes first
+        agents.answer_question("hi")
+
+
+def test_streamlit_ask_page_shows_not_configured_message(sa):
+    load("company_policy.txt")
+    config.delete_key("openai")
+    sa.st.session_state.pending_q = "How many days of annual leave do I get?"
+    sa.page_ask()
+    last = sa.st.session_state.messages[-1]
+    assert last["role"] == "assistant" and last.get("error") and "not configured" in last["content"]
+    assert any("not configured" in str(c.args[0]) for c in sa.st.warning.call_args_list)       # banner at the top of the page
+
+
+def test_streamlit_admin_lists_keys_and_delete_icon_removes_one(sa):
+    config.SETTINGS_FILE.unlink()
+    config.save_settings("openai", "gpt-4o-mini", "sk-openai-key-111111", "")
+    config.save_settings("anthropic", "claude-sonnet-5-5", "sk-ant-key-222222", "")
+    sa.st.selectbox.return_value = "anthropic"
+    sa.st.text_input.side_effect = lambda label, *a, **k: ""
+    sa.st.button.side_effect = lambda label, *a, **k: False
+    sa.page_admin()                                                               # renders: one delete button per saved key
+    dels = {c.kwargs["key"]: c.kwargs.get("disabled") for c in sa.st.button.call_args_list if c.kwargs.get("key", "").startswith("delkey_")}
+    assert dels == {"delkey_openai": None, "delkey_anthropic": None}
+    shown = " ".join(str(c) for c in sa.st.markdown.mock_calls)
+    assert "sk-o\u20261111" in shown and "sk-a\u20262222" in shown and "sk-openai-key-111111" not in shown
+    sa.st.button.side_effect = lambda label, *a, **k: k.get("key") == "delkey_anthropic"
+    sa.page_admin()                                                               # click the trash icon of the Anthropic row
+    pub = config.public_settings()
+    assert [p["provider"] for p in pub["profiles"]] == ["openai"]                 # the anthropic row is removed
+    assert next(p for p in pub["profiles"] if p["provider"] == "openai")["has_key"] is True
+    assert pub["configured"] is False and "deleted" in sa.st.session_state.admin_msg[1]
+    sa.st.session_state.pop("admin_msg")
+    sa.st.button.side_effect = lambda label, *a, **k: False
+    sa.st.button.reset_mock()
+    sa.page_admin()
+    keys = [c.kwargs["key"] for c in sa.st.button.call_args_list if c.kwargs.get("key", "").startswith("delkey_")]
+    assert keys == ["delkey_openai"]                                              # no row left for anthropic
+    sa.st.button.side_effect = lambda label, *a, **k: k.get("key") == "use_openai"
+    sa.page_admin()
+    assert config.load_settings()["provider"] == "openai" and config.public_settings()["configured"] is True
+
+
+def test_streamlit_admin_requires_a_key_for_new_provider(sa):
+    config.SETTINGS_FILE.unlink()
+    sa.st.selectbox.return_value = "groq"
+    sa.st.text_input.side_effect = lambda label, *a, **k: {"Model name": "llama-3.3-70b-versatile", "API key": ""}.get(label, "")
+    sa.st.button.side_effect = lambda label, *a, **k: label == "Submit"
+    sa.page_admin()
+    assert sa.st.error.call_args_list[-1].args[0].startswith("An API key is required") and config.public_settings()["profiles"] == []
+
+
+# ------------------------------------------------------------------ FastAPI routes (fake fastapi, real route functions)
+def load_main(monkeypatch):
+    mods = {}
+    fa = types.ModuleType("fastapi")
+    class _App:
+        def __init__(self, *a, **k): pass
+        def _deco(self, *a, **k): return lambda fn: fn
+        get = post = delete = exception_handler = _deco
+        def mount(self, *a, **k): pass
+    class HTTPException(Exception):
+        def __init__(self, status_code, detail=None): self.status_code, self.detail = status_code, detail
+    fa.FastAPI, fa.HTTPException, fa.UploadFile, fa.File = _App, HTTPException, object, lambda *a, **k: None
+    class HTMLResponse:
+        def __init__(self, content, headers=None): self.body, self.headers = content, headers or {}
+    resp = types.ModuleType("fastapi.responses"); resp.HTMLResponse, resp.JSONResponse = HTMLResponse, object
+    stat = types.ModuleType("fastapi.staticfiles"); stat.StaticFiles = lambda *a, **k: None
+    for name, m in (("fastapi", fa), ("fastapi.responses", resp), ("fastapi.staticfiles", stat)):
+        monkeypatch.setitem(sys.modules, name, m)
+    sys.modules.pop("app.main", None)
+    import importlib
+    return importlib.import_module("app.main"), HTTPException
+
+
+def test_api_routes_for_keys(monkeypatch):
+    main, HTTPException = load_main(monkeypatch)
+    try:
+        config.SETTINGS_FILE.unlink()
+        def post(**kw): return main.post_settings(main.SettingsIn(**kw))
+        for bad in (dict(provider="nope", model="m"), dict(provider="openai", model=""),
+                    dict(provider="openai", model="gpt-4o-mini"), dict(provider="custom", model="m")):
+            with pytest.raises(HTTPException) as e:
+                post(**bad)
+            assert e.value.status_code == 400
+        post(provider="openai", model="gpt-4o-mini", api_key="sk-openai-key-111111")
+        post(provider="ollama", model="llama3.1", base_url="http://localhost:11434")          # no key needed
+        out = main.get_settings()
+        assert [p["provider"] for p in out["settings"]["profiles"]] == ["openai", "ollama"] and out["providers"]["ollama"]["needs_key"] is False
+        assert "sk-openai-key-111111" not in json.dumps(out)                                   # the key is never sent to the browser
+        assert main.post_active(main.ActiveIn(provider="openai"))["settings"]["provider"] == "openai"
+        res = main.delete_key("openai")["settings"]                                            # delete the active provider's key
+        assert res["configured"] is False and [p["provider"] for p in res["profiles"]] == ["ollama"]
+        monkeypatch.setattr(llm, "chat", lambda *a, **k: (_ for _ in ()).throw(AssertionError("must not be called")))
+        with pytest.raises(llm.LLMNotConfigured) as e:
+            main.query(main.QueryIn(question="How many days of annual leave do I get?"))      # what the Ask box would call
+        assert "not configured" in str(e.value)
+        for fn, arg in ((main.delete_key, "mistral"), (lambda p: main.post_active(main.ActiveIn(provider=p)), "mistral")):
+            with pytest.raises(HTTPException) as e:
+                fn(arg)
+            assert e.value.status_code == 404
+        assert main.health()["llm_configured"] is False and main.health()["version"] == config.APP_VERSION
+        page = main.index()
+        assert config.APP_VERSION in page.body and "__V__" not in page.body and page.headers["Cache-Control"] == "no-store"
+        assert f"/static/app.js?v={config.APP_VERSION}" in page.body and "Saved API keys" in page.body    # the NEW admin page is what is served
+        assert "Remove saved key" not in page.body
+    finally:
+        sys.modules.pop("app.main", None)
